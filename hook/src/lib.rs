@@ -1,16 +1,23 @@
 #![allow(unsafe_op_in_unsafe_fn)]
-mod dx11;
+mod create_move;
+mod render;
+mod sdk;
 mod utils;
 
-use crate::dx11::ORIGINAL_PRESENT;
+use crate::create_move::{ORIGINAL_CREATEMOVE, get_local_player_pawn};
+use crate::render::ORIGINAL_PRESENT;
 use minhook::MinHook;
 use std::ffi::c_void;
 use std::panic::set_hook;
+use std::sync::OnceLock;
 use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::System::Console::{AllocConsole, FreeConsole};
+use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 use windows::Win32::System::Threading::Sleep;
-use windows::core::BOOL;
+use windows::core::{BOOL, s};
+
+static CLIENT_DLL: OnceLock<usize> = OnceLock::new();
 
 pub unsafe fn cleanup_resources() {
     unsafe {
@@ -34,18 +41,35 @@ pub unsafe extern "system" fn DllMain(
                 println!("panic: {:?}", panic_info);
                 loop {}
             }));
+            CLIENT_DLL.get_or_init(|| {
+                let module = GetModuleHandleA(s!("client.dll")).unwrap();
+                module.0 as usize
+            });
 
-            let target_addr = dx11::get_target_address() as *mut *mut c_void;
-            println!("Target address: {:p}", target_addr);
+            ORIGINAL_PRESENT.get_or_init(|| {
+                std::mem::transmute(
+                    MinHook::create_hook(
+                        *(render::get_target_address() as *mut *mut c_void),
+                        render::hk_present as _,
+                    )
+                    .unwrap(),
+                )
+            });
 
-            let result = MinHook::create_hook(*target_addr as _, dx11::hk_present as _);
-            println!("MinHook::create_hook result: {:?}", result);
-            if result.is_ok() {
-                ORIGINAL_PRESENT.get_or_init(|| std::mem::transmute(result.unwrap()));
-            }
+            ORIGINAL_CREATEMOVE.get_or_init(|| {
+                std::mem::transmute(
+                    MinHook::create_hook(
+                        create_move::get_createmove_address() as *mut c_void,
+                        create_move::hk_createmove as _,
+                    )
+                    .unwrap(),
+                )
+            });
 
-            let result = MinHook::enable_all_hooks();
-            println!("MinHook::enable_all_hooks result: {:?}", result);
+            let player_pawn = get_local_player_pawn();
+            println!("Player pawn at address: {:#x}", player_pawn as usize);
+
+            MinHook::enable_all_hooks().unwrap();
         }
         DLL_PROCESS_DETACH => {
             cleanup_resources();
@@ -55,4 +79,17 @@ pub unsafe extern "system" fn DllMain(
     }
 
     BOOL(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::sdk::user_cmd::CUserCmd;
+
+    #[test]
+    fn test_dll_main() {
+        unsafe {
+            let size = size_of::<CUserCmd>();
+            println!("CUserCmd size: {:#x}", size);
+        }
+    }
 }

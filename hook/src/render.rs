@@ -1,11 +1,13 @@
 #![allow(unsafe_op_in_unsafe_fn)]
-use imgui::{ConfigFlags, Context, Key};
+use imgui::{ConfigFlags, Context, ImColor32, Key};
 use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::mem::transmute;
 
+use crate::create_move::{CURRENT_POS_INDEX, POSITIONS};
 use crate::{cleanup_resources, utils};
+use std::sync::atomic::Ordering;
 use std::sync::{Once, OnceLock};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Direct3D11::{ID3D11DeviceContext, ID3D11RenderTargetView};
@@ -115,8 +117,7 @@ pub unsafe extern "system" fn hk_present(
                 }
 
                 if *enabled {
-                    ui.show_demo_window(&mut enabled);
-                    ui.window("Hello world")
+                    ui.window("Walkbot")
                         .size([300.0, 100.0], imgui::Condition::FirstUseEver)
                         .build(|| {
                             if ui.button("Unload") {
@@ -128,6 +129,29 @@ pub unsafe extern "system" fn hk_present(
                                 );
                             }
                         });
+                }
+
+                let draw_list = ui.get_background_draw_list();
+                let enabled = crate::create_move::ENABLED.load(Ordering::SeqCst);
+                if enabled {
+                    let current_index = CURRENT_POS_INDEX.load(Ordering::SeqCst);
+                    let positions = POSITIONS.get().unwrap().lock().unwrap();
+                    let target_pos = positions[current_index].clone();
+                    draw_list.add_text(
+                        [10.0, 10.0],
+                        ImColor32::from_rgb(255, 255, 255),
+                        "Going at: ".to_string()
+                            + &format!(
+                                "{:.2}, {:.2}, {:.2}",
+                                target_pos.x, target_pos.y, target_pos.z
+                            ),
+                    );
+                    draw_list.add_text(
+                        [10.0, 20.0],
+                        ImColor32::from_rgb(255, 255, 255),
+                        "Current index: ".to_string() + &format!("{}", current_index),
+                    );
+                    drop(positions);
                 }
             }
 
